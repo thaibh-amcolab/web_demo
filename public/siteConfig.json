@@ -1,0 +1,16 @@
+{
+  "contentSelectors": [
+    "#main-content",
+    ".central-column",
+    "div[role='main']"
+  ],
+  "mobileContentSelectors": [
+    "#mobile-main-content",
+    ".mobile-view"
+  ],
+  "excludeSelectors": [
+    "#sidebar",
+    ".ads-container",
+    "footer"
+  ]
+}
