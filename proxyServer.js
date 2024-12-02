@@ -1,5 +1,5 @@
 const express = require('express');
-const axios = require('axios');
+// const axios = require('axios');
 const puppeteer = require('puppeteer');
 
 const cors = require('cors');
@@ -40,11 +40,37 @@ app.get('/proxy', async (req, res) => {
     await page.goto(targetUrl, { waitUntil: 'networkidle2' });
 
     const content = await page.content();
+
+    // content = content.replace(/href="\/(?!\/)/g, `href="${targetUrl}/`);  // Rewriting relative links (like /page.html)
+    // content = content.replace(/src="\/(?!\/)/g, `src="${targetUrl}/`);  // Rewriting relative image/script links
+
+    const jsFiles = await page.evaluate(() => {
+      const scripts = Array.from(document.querySelectorAll('script[src]'));
+      return scripts.map(script => script.src);
+    });
+
     await browser.close();
     
+    const jsFilePromises = jsFiles.map(async (src) => {
+      const response = await fetch(src);
+      const jsContent = await response.text();
+      return jsContent;
+    });
+
+    const jsContents = await Promise.all(jsFilePromises);
+
+    // Inject JavaScript into the page content
+    let modifiedContent = content;
+
+    // Inject JS files into the page content (at the end of the body for async execution)
+    jsContents.forEach(jsContent => {
+      modifiedContent += `<script>${jsContent}</script>`;
+    });
+
+    // Send the modified content with injected JavaScript
     res.removeHeader('X-Frame-Options');
     res.removeHeader('Content-Security-Policy');
-    res.send(content);
+    res.send(modifiedContent);
   } catch (error) {
     console.error('Proxy error:', error);
     res.status(500).send('Proxy error');

@@ -15,13 +15,18 @@
             overflow: hidden;
             font-family: Arial, sans-serif;
         }
+        #background-site{
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
         #site-container {
             position: relative;
             top: 0;
             left: 0;
-            width: 50%;
-            height: 500px;
+            width: 80%;
             z-index: 1;
+            overflow: hidden;
         }
         #site-iframe {
             position: absolute;
@@ -72,9 +77,10 @@
     <div id="tour-controls">
         <button id="start-tour">Start Tour</button>
     </div>
-    <div id="site-container">
-        <iframe id="site-iframe" frameborder="0"></iframe>
-
+    <div id="background-site">
+        <div id="site-container">
+            <iframe id="site-iframe" frameborder="0"></iframe>
+        </div>
     </div>
     <div id="idol-overlay"></div>
     <div id="idol-dialogue"></div>
@@ -304,9 +310,26 @@
             iframe.style.left = `-${shiftAmount}px`;
         }
 
+        function resizeIframe(width, height, offsetLeft, zoom) {
+            const iframe = document.getElementById('site-iframe');
+            const container = document.getElementById('site-container');
+
+            // Set iframe container width and height
+            container.style.width = `${width}px`;
+            container.style.height = `${height}px`;
+
+            // Set iframe size (make it wider or taller than container to focus on a specific area)
+            iframe.style.width = `${width * zoom}px`; // Example: double the width to allow panning
+            iframe.style.height = `${height}px`;
+
+            // Offset the iframe to show the center or desired part
+            iframe.style.left = `${-offsetLeft}px`;
+        }
+
+
         // Initialize on page load
         window.addEventListener('load', () => {
-            setupIframe
+            resizeIframe(1200, 700, 0, 1)
             const iframe = document.getElementById('site-iframe');
             const idolContainer = document.getElementById('idol-overlay');
             const dialogueElement = document.getElementById('idol-dialogue');
