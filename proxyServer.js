@@ -5,7 +5,30 @@ const puppeteer = require('puppeteer');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+
+app.use(cors({
+  origin: '*', // Be more specific in production
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Type', 'X-Frame-Options', 'Content-Security-Policy']
+}));
+
+app.use((req, res, next) => {
+  res.removeHeader('X-Frame-Options');
+  res.removeHeader('Content-Security-Policy');
+  
+  // Additional headers to ensure iframe compatibility
+  res.header('X-Frame-Options', 'ALLOWALL');
+  res.header('Content-Security-Policy', 'frame-ancestors *');
+  
+  console.log('Incoming request:', {
+    url: req.originalUrl,
+    method: req.method,
+    headers: req.headers
+  });
+
+  next();
+});
 
 var contentData = new Map();
 
@@ -38,31 +61,58 @@ async function getData(url, deviceType = 'desktop')  {
 
     await page.goto(url, { waitUntil: 'networkidle2' });
 
+    await page.evaluate(() => {
+      // Add a script tag to the page that will handle postMessage events
+      const script = document.createElement('script');
+      script.textContent = `
+        window.addEventListener('message', (event) => {
+          try {
+            if (event.data.type === 'scrollToElement') {
+              const element = document.querySelector(event.data.selector);
+              if (element) {
+                element.scrollIntoView({ 
+                  behavior: 'smooth', 
+                  block: 'center' 
+                });
+                
+                // Confirm scroll to parent window
+                window.parent.postMessage({
+                  type: 'scrollComplete',
+                  selector: event.data.selector
+                }, '*');
+              } else {
+                // Element not found
+                window.parent.postMessage({
+                  type: 'scrollFailed',
+                  selector: event.data.selector
+                }, '*');
+              }
+            }
+          } catch (error) {
+            // Send error back to parent
+            window.parent.postMessage({
+              type: 'scrollError',
+              error: error.toString(),
+              selector: event.data.selector
+            }, '*');
+          }
+        }, false);
+      `;
+      
+      // Append the script to the document
+      document.documentElement.appendChild(script);
+    });
+
     const content = await page.content();
     contentData.set(url, content);
 
-    // content = content.replace(/href="\/(?!\/)/g, `href="${targetUrl}/`);  // Rewriting relative links (like /page.html)
-    // content = content.replace(/src="\/(?!\/)/g, `src="${targetUrl}/`);  // Rewriting relative image/script links
-
-    // const jsFiles = await page.evaluate(() => {
-    //   const scripts = Array.from(document.querySelectorAll('script[src]'));
-    //   return scripts.map(script => script.src);
-    // });
-
     await browser.close();
     
-    // let modifiedContent = content;
-
-    // jsFiles.forEach((src) => {
-    //   modifiedContent += `<script src="${src}" async defer></script>`;
-    // });
-
-    // Send the modified content with injected JavaScript
     return content;
-} catch (e) {
-  console.log(e);
-  throw e;
-}
+  } catch (e) {
+    console.log(e);
+    throw e;
+  }
 }
 
 
@@ -84,9 +134,6 @@ app.get('/proxy', async (req, res) => {
   const targetUrl = req.query.url;
   const deviceType = req.query.device || 'horizontal';
 
-  res.removeHeader('X-Frame-Options');
-  res.removeHeader('Content-Security-Policy');
-
   try {
     if (contentData.has(targetUrl)) {
       res.send(contentData.get(targetUrl));
@@ -101,7 +148,9 @@ app.get('/proxy', async (req, res) => {
     contentData.set(targetUrl, data);
     res.send(data);
   } finally {
-    contentData.delete(targetUrl); // Clear only after successful sending
+    setTimeout(() => {
+      contentData.delete(targetUrl);
+    }, 60000);
   }
 });
 
