@@ -21,11 +21,11 @@ app.use((req, res, next) => {
   res.header('X-Frame-Options', 'ALLOWALL');
   res.header('Content-Security-Policy', 'frame-ancestors *');
   
-  console.log('Incoming request:', {
-    url: req.originalUrl,
-    method: req.method,
-    headers: req.headers
-  });
+  // console.log('Incoming request:', {
+  //   url: req.originalUrl,
+  //   method: req.method,
+  //   headers: req.headers
+  // });
 
   next();
 });
@@ -36,6 +36,7 @@ async function getData(url, deviceType = 'desktop')  {
   try {
     const browser = await puppeteer.launch();
     const page = await browser.newPage();
+    page.setDefaultTimeout(45000);
 
     // Set user agent and viewport based on device type
     if (deviceType === 'vertical') {
@@ -62,46 +63,135 @@ async function getData(url, deviceType = 'desktop')  {
     await page.goto(url, { waitUntil: 'networkidle2' });
 
     await page.evaluate(() => {
-      // Add a script tag to the page that will handle postMessage events
-      const script = document.createElement('script');
-      script.textContent = `
-        window.addEventListener('message', (event) => {
+      const createMessageHandler = () => {
+        // Configuration object for more flexible settings
+        const CONFIG = {
+          SCROLL_DELAY: 1000,
+          ZOOM_SCALE: 1.3,
+          TRANSITION_DURATION: '0.3s'
+        };
+    
+        // Utility functions
+        const safeQuerySelector = (selector) => {
           try {
-            if (event.data.type === 'scrollToElement') {
-              const element = document.querySelector(event.data.selector);
-              if (element) {
-                element.scrollIntoView({ 
-                  behavior: 'smooth', 
-                  block: 'center' 
-                });
+            return document.querySelector(selector);
+          } catch (error) {
+            console.error('Selector error:', error);
+            return null;
+          }
+        };
+    
+        const calculateElementOrigin = (element) => {
+          const rect = element.getBoundingClientRect();
+          const documentHeight = document.documentElement.scrollHeight;
+          const documentWidth = document.documentElement.scrollWidth;
+          const scrollTop = window.scrollY || document.documentElement.scrollTop;
+          const scrollLeft = window.scrollX || document.documentElement.scrollLeft;
+    
+          const elementTop = rect.top + scrollTop;
+          const elementLeft = rect.left + scrollLeft;
+    
+          return {
+            originX: (elementLeft / documentWidth) * 100,
+            originY: (elementTop / documentHeight) * 100,
+            details: { documentHeight, documentWidth, scrollTop, scrollLeft }
+          };
+        };
+    
+        const sendMessageToParent = (type, data = {}) => {
+          window.parent.postMessage({ type, ...data }, '*');
+        };
+    
+        const resetBodyStyles = () => {
+          document.body.style.cssText = `
+            transition: transform ${CONFIG.TRANSITION_DURATION} ease;
+            transform: scale(1);
+            width: 100%;
+            height: 100%;
+          `;
+        };
+    
+        const smoothScrollToElement = async (element) => {
+          element.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center' 
+          });
+          await new Promise(resolve => setTimeout(resolve, CONFIG.SCROLL_DELAY));
+        };
+    
+        // Main event handler
+        const handleMessage = async (event) => {
+          try {
+            // Reset styles at the start of any operation
+            resetBodyStyles();
+            await new Promise(resolve => setTimeout(resolve, CONFIG.SCROLL_DELAY));
+    
+            const { type, selector } = event.data;
+    
+            switch (type) {
+              case 'scrollToElement': {
+                const element = safeQuerySelector(selector);
                 
-                // Confirm scroll to parent window
-                window.parent.postMessage({
-                  type: 'scrollComplete',
-                  selector: event.data.selector
-                }, '*');
-              } else {
-                // Element not found
-                window.parent.postMessage({
-                  type: 'scrollFailed',
-                  selector: event.data.selector
-                }, '*');
+                if (element) {
+                  await smoothScrollToElement(element);
+                  sendMessageToParent('scrollComplete', { selector });
+                } else {
+                  sendMessageToParent('scrollFailed', { selector });
+                }
+                break;
               }
+    
+              case 'ZoomIn': {
+                const element = safeQuerySelector(selector);
+                
+                if (element) {
+                  // Scroll to element
+                  await smoothScrollToElement(element);
+    
+                  // Calculate precise origin
+                  const { originX, originY, details } = calculateElementOrigin(element);
+                  
+                  console.log('Precise Zoom Origin:', { originX, originY, ...details });
+    
+                  // Apply zoom
+                  document.body.style.cssText = `
+                    transition: transform ${CONFIG.TRANSITION_DURATION} ease;
+                    transform-origin: ${originX}% ${originY}%;
+                    transform: scale(${CONFIG.ZOOM_SCALE});
+                    width: 100%;
+                    height: 100%;
+                  `;
+    
+                  await new Promise(resolve => setTimeout(resolve, 300));
+                  sendMessageToParent('zoomComplete', { selector });
+                } else {
+                  sendMessageToParent('zoomFailed', { selector });
+                }
+                break;
+              }
+    
+              default:
+                console.warn('Unknown message type:', type);
             }
           } catch (error) {
-            // Send error back to parent
-            window.parent.postMessage({
-              type: 'scrollError',
-              error: error.toString(),
-              selector: event.data.selector
-            }, '*');
+            console.error('Message handling error:', error);
+            sendMessageToParent('zoomError', { 
+              error: error.toString(), 
+              selector: event.data.selector 
+            });
           }
-        }, false);
-      `;
-      
-      // Append the script to the document
-      document.documentElement.appendChild(script);
+        };
+    
+        // Add event listener
+        window.addEventListener('message', handleMessage, false);
+      };
+    
+      // Create and inject the script
+      const script = document.createElement('script');
+      script.textContent = `(${createMessageHandler.toString()})()`;
+      document.body.appendChild(script);
     });
+  
 
     const content = await page.content();
     contentData.set(url, content);
@@ -150,56 +240,9 @@ app.get('/proxy', async (req, res) => {
   } finally {
     setTimeout(() => {
       contentData.delete(targetUrl);
-    }, 60000);
+    }, 5000);
   }
 });
-
-// app.get('/proxy', async (req, res) => {
-//   const targetUrl = req.query.url;
-//   const deviceType = req.query.device || 'desktop';
-
-//   try {
-//     const browser = await puppeteer.launch();
-//     const page = await browser.newPage();
-
-//     // Set user agent and viewport based on device type
-//     if (deviceType === 'mobile') {
-//       await page.setUserAgent(
-//         'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0 Mobile/15E148 Safari/604.1'
-//       );
-//       await page.setViewport({
-//         width: 375,
-//         height: 812,
-//         isMobile: true,
-//         hasTouch: true,
-//       });
-//     } else {
-//       await page.setUserAgent(
-//         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-//       );
-//       await page.setViewport({
-//         width: 1366,
-//         height: 768,
-//         isMobile: false,
-//       });
-//     }
-
-//     await page.goto(targetUrl, { waitUntil: 'networkidle2' });
-
-//     const content = await page.content();
-
-//     await browser.close();
-    
-
-//     // Send the modified content with injected JavaScript
-//     res.removeHeader('X-Frame-Options');
-//     res.removeHeader('Content-Security-Policy');
-//     res.send(content);
-//   } catch (error) {
-//     console.error('Proxy error:', error);
-//     res.status(500).send('Proxy error');
-//   }
-// });
 
 app.get('/', async (req, res) => {
   // firestatic => return web/index.html;
