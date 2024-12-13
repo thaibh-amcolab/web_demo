@@ -115,7 +115,7 @@ async function getData(url, deviceType = 'desktop')  {
         const smoothScrollToElement = async (element) => {
           element.scrollIntoView({ 
             behavior: 'smooth', 
-            block: 'center' 
+            top: 0 
           });
           await new Promise(resolve => setTimeout(resolve, CONFIG.SCROLL_DELAY));
         };
