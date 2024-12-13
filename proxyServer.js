@@ -68,6 +68,7 @@ async function getData(url, deviceType = 'desktop')  {
         const CONFIG = {
           SCROLL_DELAY: 1000,
           ZOOM_SCALE: 1.3,
+          ZOOM_OUT_SCALE: 0.7,
           TRANSITION_DURATION: '0.3s'
         };
     
@@ -169,6 +170,35 @@ async function getData(url, deviceType = 'desktop')  {
                 }
                 break;
               }
+
+              case 'ZoomOut': {
+                const element = safeQuerySelector(selector);
+                
+                if (element) {
+                  // Scroll to element
+                  await smoothScrollToElement(element);
+    
+                  // Calculate precise origin
+                  const { originX, originY, details } = calculateElementOrigin(element);
+                  
+                  console.log('Precise Zoom Origin:', { originX, originY, ...details });
+    
+                  // Apply zoom
+                  document.body.style.cssText = `
+                    transition: transform ${CONFIG.TRANSITION_DURATION} ease;
+                    transform-origin: ${originX}% ${originY}%;
+                    transform: scale(${CONFIG.ZOOM_OUT_SCALE});
+                    width: 100%;
+                    height: 100%;
+                  `;
+    
+                  await new Promise(resolve => setTimeout(resolve, 300));
+                  sendMessageToParent('zoomOutComplete', { selector });
+                } else {
+                  sendMessageToParent('zoomOutFailed', { selector });
+                }
+                break;
+              }
     
               default:
                 console.warn('Unknown message type:', type);
@@ -199,9 +229,8 @@ async function getData(url, deviceType = 'desktop')  {
     await browser.close();
     
     return content;
-  } catch (e) {
-    console.log(e);
-    throw e;
+  } catch (error) {
+    console.error(`Navigation failed: ${error.message}`);
   }
 }
 
