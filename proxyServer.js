@@ -1,4 +1,43 @@
 const express = require('express');
+const crypto = require('crypto');
+
+const authConfig = {
+  serviceName: 'proxy-service',
+  secret: 'service-secret',
+  apiKeys: {
+    'python-service1': 'python1-api-key',
+    'python-service2': 'python2-api-key',
+    'ruby-service': 'ruby-api-key',
+    'youtube-service': 'youtube-api-key',
+    'nodejs-service': 'nodejs-api-key',
+    'proxy-service': 'proxy-api-key',
+  }
+};
+
+// Middleware for authentication
+function authenticate(req, res, next) {
+  const { serviceName, signature } = req.query;
+  if (!serviceName || !signature) {
+    return res.status(401).json({ error: 'Missing service-name or signature' });
+  }
+
+  const apiKey = authConfig.apiKeys[serviceName];
+  if (!apiKey) {
+    return res.status(401).json({ error: 'Invalid service-name' });
+  }
+
+  const expectedSignature = crypto
+    .createHash('sha256')
+    .update(`${serviceName}${apiKey}${authConfig.secret}`)
+    .digest('hex');
+
+  if (signature !== expectedSignature) {
+    return res.status(401).json({ error: `Invalid signature, ${serviceName}, ${apiKey}, ${authConfig.secret}, ${signature}, ${expectedSignature}` });
+  }
+
+  next();
+}
+
 // const axios = require('axios');
 const puppeteer = require('puppeteer');
 
@@ -235,7 +274,7 @@ async function getData(url, deviceType = 'desktop')  {
 }
 
 
-app.get('/content',  async (req, res) => {
+app.get('/content', authenticate, async (req, res) => {
   const targetUrl = req.query.url;
   const deviceType = req.query.device || 'horizontal';
 
@@ -249,7 +288,7 @@ app.get('/content',  async (req, res) => {
   }
 });
 
-app.get('/proxy', async (req, res) => {
+app.get('/proxy', authenticate, async (req, res) => {
   const targetUrl = req.query.url;
   const deviceType = req.query.device || 'horizontal';
 
@@ -269,7 +308,7 @@ app.get('/proxy', async (req, res) => {
   } finally {
     setTimeout(() => {
       contentData.delete(targetUrl);
-    }, 5000);
+    }, 0);
   }
 });
 
